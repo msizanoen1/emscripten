@@ -903,15 +903,11 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
 
     has_source_inputs = False
     has_header_inputs = False
-    lib_dirs = []
 
     has_dash_c = '-c' in newargs
     has_dash_S = '-S' in newargs
     executable_endings = JS_CONTAINING_ENDINGS + ('.wasm',)
     compile_only = has_dash_c or has_dash_S
-
-    if not compile_only:
-      newargs += shared.emsdk_ldflags(newargs)
 
     # find input files this a simple heuristic. we should really analyze
     # based on a full understanding of gcc params, right now we just assume that
@@ -977,27 +973,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
             has_source_inputs = True
           else:
             exit_with_error(arg + ": Input file has an unknown suffix, don't know what to do with it!")
-      elif arg.startswith('-L'):
-        lib_dirs.append(arg[2:])
-        newargs[i] = ''
-        link_flags.append((i, arg))
-      elif arg.startswith('-l'):
-        libs.append((i, arg[2:]))
-        newargs[i] = ''
-        link_flags.append((i, arg))
-      elif arg.startswith('-Wl,'):
-        # Multiple comma separated link flags can be specified. Create fake
-        # fractional indices for these: -Wl,a,b,c,d at index 4 becomes:
-        # (4, a), (4.25, b), (4.5, c), (4.75, d)
-        link_flags_to_add = arg.split(',')[1:]
-        for flag_index, flag in enumerate(link_flags_to_add):
-          if flag.startswith('-l'):
-            libs.append((i, flag[2:]))
-          elif flag.startswith('-L'):
-            lib_dirs.append(flag[2:])
-          link_flags.append((i + float(flag_index) / len(link_flags_to_add), flag))
 
-        newargs[i] = ''
       elif arg == '-s':
         # -s and some other compiler flags are normally passed onto the linker
         # TODO(sbc): Pass this and other flags through when using lld
@@ -1084,8 +1060,6 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
 
     if len(input_files) == 0:
       exit_with_error('no input files\nnote that input files without a known suffix are ignored, make sure your input files end with one of: ' + str(SOURCE_ENDINGS + OBJECT_FILE_ENDINGS + DYNAMICLIB_ENDINGS + STATICLIB_ENDINGS + ASSEMBLY_ENDINGS + HEADER_ENDINGS))
-
-    newargs = shared.COMPILER_OPTS + shared.get_cflags(newargs) + newargs
 
     if options.separate_asm and final_suffix != '.html':
       shared.WarningManager.warn('SEPARATE_ASM')
@@ -1180,6 +1154,40 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
     # directory we use.
     shared.reconfigure_cache()
 
+    # Add emscripten-specific cflag and ldflags
+    newargs = shared.COMPILER_OPTS + shared.get_cflags(newargs) + newargs
+    link_to_object = final_suffix not in executable_endings
+    if not compile_only and not link_to_object:
+      newargs += get_ldflags(newargs, use_cxx)
+
+    # Process library flags.
+    lib_dirs = []
+    for i in range(len(newargs)):
+      arg = newargs[i]
+      if arg.startswith('-L'):
+        lib_dirs.append(arg[2:])
+        newargs[i] = ''
+        link_flags.append((i, arg))
+      elif arg.startswith('-l'):
+        libs.append((i, arg[2:]))
+        newargs[i] = ''
+        link_flags.append((i, arg))
+      elif arg.startswith('-Wl,'):
+        # Multiple comma separated link flags can be specified. Create fake
+        # fractional indices for these: -Wl,a,b,c,d at index 4 becomes:
+        # (4, a), (4.25, b), (4.5, c), (4.75, d)
+        link_flags_to_add = arg.split(',')[1:]
+        for flag_index, flag in enumerate(link_flags_to_add):
+          if flag.startswith('-l'):
+            libs.append((i, flag[2:]))
+          elif flag.startswith('-L'):
+            lib_dirs.append(flag[2:])
+          link_flags.append((i + float(flag_index) / len(link_flags_to_add), flag))
+
+        newargs[i] = ''
+
+    newargs = [a for a in newargs if a != '']
+
     if shared.Settings.USE_PTHREADS:
       # These runtime methods are called from worker.js
       shared.Settings.EXPORTED_RUNTIME_METHODS += ['establishStackSpace', 'dynCall_ii']
@@ -1236,7 +1244,6 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
 
     if shared.Settings.DEMANGLE_SUPPORT:
       shared.Settings.EXPORTED_FUNCTIONS += ['___cxa_demangle']
-      forced_stdlibs.append('libc++abi')
 
     if shared.Settings.EMBIND:
       forced_stdlibs.append('libembind')
@@ -2530,6 +2537,96 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
   return 0
 
 
+def get_ldflags(user_args, cxx):
+  if os.environ.get('EMMAKEN_NO_SDK'):
+    return []
+
+  library_paths = [
+      shared.path_from_root('system', 'local', 'lib'),
+      shared.path_from_root('system', 'lib'),
+      shared.Cache.dirname,
+  ]
+  ldflags = ['-L' + l for l in library_paths]
+
+  if '-nostdlib' in user_args or shared.Settings.SIDE_MODULE:
+    return ldflags
+
+  system_libs_map = system_libs.Library.get_usable_variations()
+
+  # Setting this in the environment will avoid checking dependencies and make
+  # building big projects a little faster 1 means include everything; otherwise
+  # it can be the name of a lib (libc++, etc.).
+  # You can provide 1 to include everything, or a comma-separated list with the
+  # ones you want
+  force = os.environ.get('EMCC_FORCE_STDLIBS')
+  force_include = set((force.split(',') if force else []))
+  if force_include:
+    logger.debug('forcing stdlibs: ' + str(force_include))
+
+  for lib in force_include:
+    if lib not in system_libs_map:
+      shared.exit_with_error('invalid forced library: %s', lib)
+
+  libs = []
+  if cxx:
+    libs.append('libc++')
+
+  libs.append('libc')
+  if not shared.Settings.MINIMAL_RUNTIME:
+    libs.append('libc-extras')
+  if shared.Settings.WASM:
+    libs.append('libc-wasm')
+  libs.append('libpthread')
+  if shared.Settings.MALLOC != 'none':
+    libs.append('libmalloc')
+  if shared.Settings.WASM_BACKEND:
+    libs.append('libcompiler_rt')
+    if shared.Settings.WASM:
+      libs.append('libc_rt_wasm')
+      libs.append('libcompiler_rt_wasm')
+  if shared.Settings.STANDALONE_WASM:
+    libs.append('libstandalonewasm')
+
+
+  # libc++abi and libc++ *static* linking is tricky. e.g. cxa_demangle.cpp disables c++
+  # exceptions, but since the string methods in the headers are *weakly* linked, then
+  # we might have exception-supporting versions of them from elsewhere, and if libc++abi
+  # is first then it would "win", breaking exception throwing from those string
+  # header methods. To avoid that, we link libc++abi last.
+  if cxx:
+    libs.append('libc++abi')
+
+  if shared.Settings.UBSAN_RUNTIME == 1:
+    libs.append('libubsan_minimal_rt_wasm')
+  elif shared.Settings.UBSAN_RUNTIME == 2:
+    libs.append('libubsan_rt_wasm')
+
+  if shared.Settings.USE_LSAN:
+    libs.append('liblsan_rt_wasm')
+
+  if shared.Settings.USE_ASAN:
+    libs.append('libasan_rt_wasm')
+
+  # Wrap libraries in --whole-archive, as needed.  We need to do this last
+  # since otherwise the abort sorting won't make sense.
+  in_group = False
+  for lib in libs:
+    path = system_libs_map[lib].get_path()
+    basename = os.path.basename(os.path.splitext(path)[0])
+    need_whole_archive = force == '1' or lib in force_include
+    if need_whole_archive and not in_group:
+      ldflags.append('--whole-archive')
+      in_group = True
+    if in_group and not need_whole_archive:
+      ldflags.append('--no-whole-archive')
+      in_group = False
+    ldflags.append('-l' + basename[3:])
+  if in_group:
+    ldflags.append('--no-whole-archive')
+
+  return ldflags
+
+
 def parse_args(newargs):
   options = EmccOptions()
   settings_changes = []
@@ -3487,7 +3584,7 @@ def process_libraries(libs, lib_dirs, temp_files):
   # Find library files
   for i, lib in libs:
     logger.debug('looking for library "%s"', lib)
-    suffixes = STATICLIB_ENDINGS + DYNAMICLIB_ENDINGS
+    suffixes = STATICLIB_ENDINGS + DYNAMICLIB_ENDINGS + ('.bc',)
 
     if shared.Settings.WASM_BACKEND:
       # under the wasm .a files are found using the normal -l/-L flags to

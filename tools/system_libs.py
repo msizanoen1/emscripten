@@ -331,7 +331,7 @@ class Library(object):
     objects = []
     cflags = self.get_cflags()
     for src in self.get_files():
-      o = self.in_temp(os.path.basename(src) + '.o')
+      o = self.in_temp(os.path.splitext(os.path.basename(src))[0] + '.o')
       commands.append([shared.PYTHON, self.emcc, '-c', src, '-o', o] + cflags)
       objects.append(o)
     run_commands(commands)
@@ -586,8 +586,6 @@ class NoBCLibrary(Library):
 
 class libcompiler_rt(Library):
   name = 'libcompiler_rt'
-  depends = ['libc']
-
   cflags = ['-O2']
   src_dir = ['system', 'lib', 'compiler-rt', 'lib', 'builtins']
   src_files = ['divdc3.c', 'divsc3.c', 'muldc3.c', 'mulsc3.c']
@@ -595,7 +593,6 @@ class libcompiler_rt(Library):
 
 class libc(AsanInstrumentedLibrary, MuslInternalLibrary, MTLibrary):
   name = 'libc'
-  depends = ['libcompiler_rt']
 
   # Without -fno-builtin, LLVM can optimize away or convert calls to library
   # functions to something else based on assumptions that they behave exactly
@@ -687,8 +684,6 @@ class libc(AsanInstrumentedLibrary, MuslInternalLibrary, MTLibrary):
 
   def get_depends(self):
     depends = super(libc, self).get_depends()
-    if shared.Settings.WASM:
-      return depends + ['libc-wasm']
     return depends
 
 
@@ -707,7 +702,7 @@ class libc_wasm(MuslInternalLibrary):
     return shared.Settings.WASM
 
 
-class libc_extras(MuslInternalLibrary):
+class libc_extras(MuslInternalLibrary, NoBCLibrary):
   name = 'libc-extras'
   src_dir = ['system', 'lib', 'libc']
   src_files = ['extras.c']
@@ -715,7 +710,6 @@ class libc_extras(MuslInternalLibrary):
 
 class libcxxabi(CXXLibrary, MTLibrary):
   name = 'libc++abi'
-  depends = ['libc']
   cflags = ['-std=c++11', '-Oz', '-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS']
 
   def get_cflags(self):
@@ -745,7 +739,6 @@ class libcxxabi(CXXLibrary, MTLibrary):
 
 class libcxx(NoBCLibrary, CXXLibrary, NoExceptLibrary, MTLibrary):
   name = 'libc++'
-  depends = ['libc++abi']
 
   cflags = ['-std=c++11', '-DLIBCXX_BUILDING_LIBCXXABI=1', '-D_LIBCPP_BUILDING_LIBRARY', '-Oz',
             '-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS']
@@ -870,7 +863,6 @@ class libmalloc(MTLibrary, NoBCLibrary):
 
 class libal(Library):
   name = 'libal'
-  depends = ['libc']
 
   cflags = ['-Os']
   src_dir = ['system', 'lib']
@@ -879,7 +871,6 @@ class libal(Library):
 
 class libgl(MTLibrary):
   name = 'libgl'
-  depends = ['libc']
 
   src_dir = ['system', 'lib', 'gl']
   src_glob = '*.c'
@@ -929,7 +920,6 @@ class libgl(MTLibrary):
 class libembind(CXXLibrary):
   name = 'libembind'
   cflags = ['-std=c++11']
-  depends = ['libc++abi']
   never_force = True
 
   def __init__(self, **kwargs):
@@ -962,7 +952,6 @@ class libembind(CXXLibrary):
 
 class libfetch(CXXLibrary, MTLibrary):
   name = 'libfetch'
-  depends = ['libc++abi']
   never_force = True
 
   def get_files(self):
@@ -971,7 +960,6 @@ class libfetch(CXXLibrary, MTLibrary):
 
 class libasmfs(CXXLibrary, MTLibrary):
   name = 'libasmfs'
-  depends = ['libc++abi']
   never_force = True
 
   def get_files(self):
@@ -986,9 +974,8 @@ class libhtml5(Library):
   src_glob = '*.c'
 
 
-class libpthreads(AsanInstrumentedLibrary, MuslInternalLibrary, MTLibrary):
-  name = 'libpthreads'
-  depends = ['libc']
+class libpthread(AsanInstrumentedLibrary, MuslInternalLibrary, MTLibrary):
+  name = 'libpthread'
   cflags = ['-O2']
 
   def get_files(self):
@@ -1039,7 +1026,7 @@ class libpthreads(AsanInstrumentedLibrary, MuslInternalLibrary, MTLibrary):
       return [shared.path_from_root('system', 'lib', 'pthread', 'library_pthread_stub.c')]
 
   def get_base_name_prefix(self):
-    return 'libpthreads' if self.is_mt else 'libpthreads_stub'
+    return 'libpthread' if self.is_mt else 'libpthread_stub'
 
 
 class CompilerRTWasmLibrary(NoBCLibrary):
@@ -1088,7 +1075,6 @@ class libubsan_minimal_rt_wasm(CompilerRTWasmLibrary, MTLibrary):
 
 class libsanitizer_common_rt_wasm(CompilerRTWasmLibrary, MTLibrary):
   name = 'libsanitizer_common_rt_wasm'
-  depends = ['libc++abi']
   js_depends = ['memalign', 'emscripten_builtin_memalign', '__data_end', '__heap_base']
   never_force = True
 
@@ -1165,10 +1151,7 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
   global stdout, stderr
   stdout = stdout_
   stderr = stderr_
-
-  # Set of libraries to include on the link line, as opposed to `force` which
-  # is the set of libraries to force include (with --whole-archive).
-  always_include = set()
+  system_libs_map = Library.get_usable_variations()
 
   # Setting this will only use the forced libs in EMCC_FORCE_STDLIBS. This avoids spending time checking
   # for unresolved symbols in your project files, which can speed up linking, but if you do not have
@@ -1229,35 +1212,9 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
       for dep in value:
         shared.Settings.EXPORTED_FUNCTIONS.append(mangle_c_symbol_name(dep))
 
-  always_include.add('libpthreads')
-  if shared.Settings.MALLOC != 'none':
-    always_include.add('libmalloc')
-  if shared.Settings.WASM_BACKEND:
-    always_include.add('libcompiler_rt')
-
   libs_to_link = []
   already_included = set()
-  system_libs_map = Library.get_usable_variations()
   system_libs = sorted(system_libs_map.values(), key=lambda lib: lib.name)
-
-  # Setting this in the environment will avoid checking dependencies and make
-  # building big projects a little faster 1 means include everything; otherwise
-  # it can be the name of a lib (libc++, etc.).
-  # You can provide 1 to include everything, or a comma-separated list with the
-  # ones you want
-  force = os.environ.get('EMCC_FORCE_STDLIBS')
-  if force == '1':
-    force = ','.join(name for name, lib in system_libs_map.items() if not lib.never_force)
-  force_include = set((force.split(',') if force else []) + forced)
-  if force_include:
-    logger.debug('forcing stdlibs: ' + str(force_include))
-
-  for lib in always_include:
-    assert lib in system_libs_map
-
-  for lib in force_include:
-    if lib not in system_libs_map:
-      shared.exit_with_error('invalid forced library: %s', lib)
 
   def add_library(lib):
     if lib.name in already_included:
@@ -1266,7 +1223,7 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
 
     logger.debug('including %s (%s)' % (lib.name, lib.get_filename()))
 
-    need_whole_archive = lib.name in force_include and lib.get_ext() == '.a'
+    need_whole_archive = lib.name in forced and lib.get_ext() == '.a'
     libs_to_link.append((lib.get_path(), need_whole_archive))
 
     # Recursively add dependencies
@@ -1282,10 +1239,10 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
   for lib in system_libs:
     if lib.name in already_included:
       continue
-    force_this = lib.name in force_include
+    force_this = lib.name in forced
     if not force_this and only_forced:
       continue
-    include_this = force_this or lib.name in always_include
+    include_this = force_this
 
     if not include_this:
       need_syms = set()
@@ -1310,34 +1267,7 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
     # We need to build and link the library in
     add_library(lib)
 
-  if shared.Settings.WASM_BACKEND:
-    add_library(system_libs_map['libcompiler_rt_wasm'])
-    add_library(system_libs_map['libc_rt_wasm'])
-
-  if shared.Settings.UBSAN_RUNTIME == 1:
-    add_library(system_libs_map['libubsan_minimal_rt_wasm'])
-  elif shared.Settings.UBSAN_RUNTIME == 2:
-    add_library(system_libs_map['libubsan_rt_wasm'])
-
-  if shared.Settings.USE_LSAN:
-    force_include.add('liblsan_rt_wasm')
-    add_library(system_libs_map['liblsan_rt_wasm'])
-
-  if shared.Settings.USE_ASAN:
-    force_include.add('libasan_rt_wasm')
-    add_library(system_libs_map['libasan_rt_wasm'])
-
-  if shared.Settings.STANDALONE_WASM:
-    add_library(system_libs_map['libstandalonewasm'])
-
   libs_to_link.sort(key=lambda x: x[0].endswith('.a')) # make sure to put .a files at the end.
-
-  # libc++abi and libc++ *static* linking is tricky. e.g. cxa_demangle.cpp disables c++
-  # exceptions, but since the string methods in the headers are *weakly* linked, then
-  # we might have exception-supporting versions of them from elsewhere, and if libc++abi
-  # is first then it would "win", breaking exception throwing from those string
-  # header methods. To avoid that, we link libc++abi last.
-  libs_to_link.sort(key=lambda x: x[0].endswith('libc++abi.bc'))
 
   # Wrap libraries in --whole-archive, as needed.  We need to do this last
   # since otherwise the abort sorting won't make sense.
