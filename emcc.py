@@ -1988,7 +1988,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
     link_flags = [l for l in link_flags if l[0] not in consumed]
     # Filter out libraries that musl includes in libc itself, or with we
     # otherwise privide implicitly.
-    link_flags = [l for l in link_flags if l[1] not in ('-lm', '-lrt', '-ldl', '-lpthread')]
+    link_flags = [l for l in link_flags if l[1] not in ('-lc', '-lm', '-lrt', '-ldl', '-lpthread')]
     temp_files = filter_out_dynamic_libs(temp_files)
 
     link_to_object = final_suffix not in executable_endings

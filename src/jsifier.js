@@ -88,6 +88,7 @@ function JSify(data, functionsOnly) {
   }
 
   function processLibraryFunction(snippet, ident, finalName) {
+    finalName = finalName.replace(/\$/g, "$$$$");
     // It is possible that when printing the function as a string on Windows, the js interpreter we are in returns the string with Windows
     // line endings \r\n. This is undesirable, since line endings are managed in the form \n in the output for binary file writes, so
     // make sure the endings are uniform.

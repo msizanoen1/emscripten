@@ -493,9 +493,9 @@ function loadWebAssemblyModule(binary, flags) {
         if (prop.startsWith('fp$')) {
           // the fp$ function returns the address (table index) of the function
           var parts = prop.split('$');
-          assert(parts.length == 3)
-          var name = parts[1];
-          var sig = parts[2];
+          assert(parts.length >= 3)
+          var name = parts.slice(1, parts.length - 1).join('$');
+          var sig = parts[parts.length - 1];
           var fp = 0;
           return obj[prop] = function() {
             if (!fp) {

@@ -1786,7 +1786,8 @@ def create_fp_accessors(metadata):
   for fullname in metadata['declares']:
     if not fullname.startswith('fp$'):
       continue
-    _, name, sig = fullname.split('$')
+    parts = fullname.split('$')
+    name, sig = '$'.join(parts[1:-1]), parts[-1]
     mangled = asmjs_mangle(name)
     side = 'parent' if shared.Settings.SIDE_MODULE else ''
     assertion = ('\n  assert(%sModule["%s"] || typeof %s !== "undefined", "external function `%s` is missing.' % (side, mangled, mangled, name) +
