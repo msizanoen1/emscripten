@@ -264,7 +264,6 @@ ___cxa_find_matching_catch_9
 ___cxa_free_exception
 ___cxa_get_exception_ptr
 ___cxa_increment_exception_refcount
-___cxa_pure_virtual
 ___cxa_rethrow
 ___cxa_rethrow_primary_exception
 ___cxa_thread_atexit
@@ -403,7 +402,11 @@ ___syscall96
 ___syscall97
 ___unlock
 ___wait
+___wasi_emscripten_get_environ
+___wasi_environ_get
+___wasi_environ_sizes_get
 ___wasi_fd_write
+___wasi_proc_exit
 __addDays
 __arraySum
 __battery
@@ -680,6 +683,7 @@ _emscripten_get_devicemotion_status
 _emscripten_get_deviceorientation_status
 _emscripten_get_element_css_size
 _emscripten_get_env
+_emscripten_get_environ
 _emscripten_get_fullscreen_status
 _emscripten_get_gamepad_status
 _emscripten_get_heap_size
@@ -1037,6 +1041,8 @@ _emscripten_worker_respond_provisionally
 _emscripten_yield
 _endprotoent
 _endpwent
+_environ_get
+_environ_sizes_get
 _execl
 _execle
 _execlp
@@ -1434,6 +1440,7 @@ _pathconf
 _pixelRGBA
 _posix_spawn
 _posix_spawnp
+_proc_exit
 _pthread_attr_destroy
 _pthread_attr_getdetachstate
 _pthread_attr_getstack
@@ -1446,9 +1453,7 @@ _pthread_cleanup_pop
 _pthread_cleanup_push
 _pthread_cond_destroy
 _pthread_cond_init
-_pthread_cond_signal
 _pthread_cond_timedwait
-_pthread_cond_wait
 _pthread_condattr_destroy
 _pthread_condattr_getclock
 _pthread_condattr_getpshared
